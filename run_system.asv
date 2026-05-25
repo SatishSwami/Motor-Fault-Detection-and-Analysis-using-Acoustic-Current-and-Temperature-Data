@@ -1,0 +1,146 @@
+clc; clear;
+
+% ================= LOAD TRAINED MODEL =================
+load('trained_model.mat');
+
+% ================= USER INPUT =================
+[file, path] = uigetfile({'*.wav;*.mat','Motor Signal Files (*.wav, *.mat)'}, ...
+                         'Select Input Motor Signal');
+
+if isequal(file,0)
+    error('No file selected');
+end
+
+filePath = fullfile(path,file);
+
+temp = input('Enter Temperature: ');
+current = input('Enter Current in %: ');
+
+disp('Select Motor Type:')
+disp('1 - AC')
+disp('2 - DC')
+disp('3 - BLDC')
+disp('4 - Servo')
+disp('5 - Synchronous')
+
+choice = input('Enter choice (1-5): ');
+
+while isempty(choice) || ~ismember(choice,1:5)
+    disp('Invalid choice! Please enter a number between 1 and 5.');
+    choice = input('Enter choice (1-5): ');
+end
+
+switch choice
+    case 1
+        motorType = 'AC';
+    case 2
+        motorType = 'DC';
+    case 3
+        motorType = 'BLDC';
+    case 4
+        motorType = 'Servo';
+    case 5
+        motorType = 'Synchronous';
+end
+
+% ================= LOAD INPUT SIGNAL =================
+[~,~,ext] = fileparts(filePath);
+
+if strcmpi(ext,'.wav')
+    [sig, ~] = audioread(filePath);
+
+    if size(sig,2) > 1
+        sig = mean(sig,2);   % convert stereo to mono
+    end
+
+elseif strcmpi(ext,'.mat')
+    d = load(filePath);
+    vars = fieldnames(d);
+    sig = d.(vars{1});
+
+else
+    error('Unsupported file type');
+end
+
+sig = sig(:);
+
+%% ================= PREPROCESSING =================
+% Step 1: Remove DC offset
+sig = sig - mean(sig);
+
+% Step 2: Add Gaussian noise
+sig = sig + 0.02 * randn(size(sig));
+
+% Step 3: Denoising using moving average filter
+sig = movmean(sig, 5);
+
+% Step 4: Normalize
+sig = sig / max(abs(sig) + eps);
+
+%% ================= FEATURE EXTRACTION =================
+rms_val  = rms(sig);
+mean_val = mean(sig);
+
+Yf = abs(fft(sig));
+[~, idx] = max(Yf);
+peak_freq = idx;
+
+feature = [rms_val peak_freq mean_val 0];
+
+%% ================= KNN PREDICTION =================
+X = model.features;
+Y = model.labels;
+
+d = sqrt(sum((X - feature).^2, 2));
+[~, id] = min(d);
+label = Y(id);
+
+%% ================= MOTOR-SPECIFIC THRESHOLDS =================
+switch motorType
+    case 'AC'
+        temp_th = 110;
+        curr_th = 130;
+
+    case 'DC'
+        temp_th = 95;
+        curr_th = 140;
+
+    case 'BLDC'
+        temp_th = 100;
+        curr_th = 130;
+
+    case 'Servo'
+        temp_th = 85;
+        curr_th = 110;
+
+    case 'Synchronous'
+        temp_th = 115;
+        curr_th = 150;
+end
+
+%% ================= FINAL DECISION =================
+if (label == 1) || (rms_val > 0.35) || (peak_freq > 1500) || (abs(mean_val) > 0.1)
+
+    fprintf('\n====================================\n');
+    fprintf('Motor Condition : ABNORMAL\n');
+    fprintf('Early Warning   : Something is wrong in the motor\n');
+    fprintf('Action          : Motor should be stopped immediately\n');
+
+    % Fault type classification using motor-specific thresholds
+    if temp > temp_th
+        result = 'Fault Type     : Overheating Fault';
+
+    elseif current > curr_th
+        result = 'Fault Type     : Overload Fault';
+
+    else
+        result = 'Fault Type     : Mechanical Fault';
+    end
+
+else
+    result = 'Motor Condition : HEALTHY';
+    fprintf('\n====================================\n');
+end
+
+fprintf('%s\n', result);
+fprintf('====================================\n');

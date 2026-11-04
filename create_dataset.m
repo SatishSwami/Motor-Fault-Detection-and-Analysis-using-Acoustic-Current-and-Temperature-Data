@@ -1,42 +1,43 @@
+
 clc; clear;
 
-baseFolder = 'C:\Users\Satish\OneDrive\Desktop\DSIP Project\DSIP Project\Dataset';
+baseFolder = fullfile(pwd, 'Dataset');
+
+assert(isfolder(baseFolder), 'Dataset folder not found.');
 
 features = [];
 labels = [];
 
-
-% AC INDUCTION MOTOR (.mat)
-
-acFolder = fullfile(baseFolder, 'AC_induc tion');
+%% AC INDUCTION MOTOR
+acFolder = fullfile(baseFolder, 'AC_Induction');
 acFiles = dir(fullfile(acFolder, '*.mat'));
 
+assert(~isempty(acFiles), 'No AC motor MAT files found.');
+
 for i = 1:length(acFiles)
-
     filePath = fullfile(acFiles(i).folder, acFiles(i).name);
-
-    % Load signal
     data = load(filePath);
     vars = fieldnames(data);
+
+    assert(~isempty(vars), 'Empty MAT file.');
+
     signal = data.(vars{1});
+    assert(isnumeric(signal) && ~isempty(signal), 'Invalid AC signal.');
+
     signal = signal(:);
+    signal = signal - mean(signal);
+    signal = signal + 0.02*randn(size(signal));
+    signal = movmean(signal,5);
+    signal = signal / max(abs(signal)+eps);
 
-    % ===== PREPROCESSING =====
-    signal = signal - mean(signal);                  % remove DC offset
-    signal = signal + 0.02*randn(size(signal));     % add Gaussian noise
-    signal = movmean(signal,5);                     % denoise
-    signal = signal / max(abs(signal)+eps);         % normalize
-
-    % ===== FEATURE EXTRACTION =====
-    rms_val   = rms(signal);
-    mean_val  = mean(signal);
-    Y         = abs(fft(signal));
-    [~, idx]  = max(Y);
+    rms_val = rms(signal);
+    mean_val = mean(signal);
+    Y = abs(fft(signal));
+    [~, idx] = max(Y);
     peak_freq = idx;
 
     features = [features; rms_val peak_freq mean_val 0];
 
-    % Label
     if contains(acFiles(i).name,'Normal')
         labels = [labels; 0];
     else
@@ -44,22 +45,18 @@ for i = 1:length(acFiles)
     end
 end
 
-%% =====================================================
-%% BLDC MOTOR (.wav)
-%% =====================================================
+%% BLDC MOTOR
 bldcFolder = fullfile(baseFolder,'BLDC_sound_data');
-subFolders = {'healthy','bearing','propeller'};
+subFolders = {'Healthy','Bearing','Propeller'};
 
 for s = 1:length(subFolders)
-
     folderPath = fullfile(bldcFolder, subFolders{s});
     files = dir(fullfile(folderPath,'**','*.wav'));
 
+    assert(~isempty(files), 'No WAV files found in %s.', folderPath);
+
     for i = 1:length(files)
-
         filePath = fullfile(files(i).folder, files(i).name);
-
-        % Load audio
         [y, ~] = audioread(filePath);
 
         if size(y,2) > 1
@@ -67,24 +64,20 @@ for s = 1:length(subFolders)
         end
 
         signal = y(:);
-
-        % ===== PREPROCESSING =====
         signal = signal - mean(signal);
         signal = signal + 0.02*randn(size(signal));
         signal = movmean(signal,5);
         signal = signal / max(abs(signal)+eps);
 
-        % ===== FEATURE EXTRACTION =====
-        rms_val   = rms(signal);
-        mean_val  = mean(signal);
-        Y         = abs(fft(signal));
-        [~, idx]  = max(Y);
+        rms_val = rms(signal);
+        mean_val = mean(signal);
+        Y = abs(fft(signal));
+        [~, idx] = max(Y);
         peak_freq = idx;
 
         features = [features; rms_val peak_freq mean_val 0];
 
-        % Label
-        if strcmp(subFolders{s},'healthy')
+        if strcmp(subFolders{s},'Healthy')
             labels = [labels; 0];
         else
             labels = [labels; 1];
@@ -92,38 +85,21 @@ for s = 1:length(subFolders)
     end
 end
 
-%% =====================================================
-%% DC MOTOR (.xlsx)
-%% =====================================================
-dcPath = fullfile(baseFolder,'DC_motor.xlsx');
-data = readmatrix(dcPath);
+%% DC MOTOR
+% DC workbook contains experimental data, not verified
+% healthy/fault labels. Excluded until label mapping is confirmed.
+disp('DC experimental data identified; classification deferred.');
 
-current = data(:,1);
-speed   = data(:,2);
+%% VALIDATE AND SAVE
+assert(size(features,1) == numel(labels), ...
+    'Feature and label counts do not match.');
 
-signal = current(:);
+assert(all(isfinite(features(:))), 'Features contain invalid values.');
 
-% ===== PREPROCESSING =====
-signal = signal - mean(signal);
-signal = signal + 0.02*randn(size(signal));
-signal = movmean(signal,5);
-signal = signal / max(abs(signal)+eps);
-
-% ===== FEATURE EXTRACTION =====
-rms_val   = rms(signal);
-mean_val  = mean(signal);
-peak_freq = 0;
-std_speed = std(speed);
-
-features = [features; rms_val peak_freq mean_val std_speed];
-
-% Label
-if rms_val > 0.35
-    labels = [labels; 1];
-else
-    labels = [labels; 0];
-end
-
-%% SAVE
 save('final_dataset.mat','features','labels');
-disp('Dataset Ready');
+
+fprintf('Dataset generated successfully.\n');
+fprintf('Total samples: %d\n', size(features,1));
+fprintf('Feature count: %d\n', size(features,2));
+fprintf('Healthy samples: %d\n', sum(labels==0));
+fprintf('Faulty samples: %d\n', sum(labels==1));
